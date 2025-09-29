@@ -1,0 +1,139 @@
+{
+  "totalGenerated": 537,
+  "imported": 537,
+  "skipped": 0,
+  "dateRange": {
+    "from": "2025-06-28T21:26:20.922Z",
+    "to": "2025-09-28T21:26:20.922Z"
+  },
+  "statistics": {
+    "averagePerDay": 6,
+    "successRate": 452,
+    "companies": [
+      {
+        "company": "EcoHeat Technologies",
+        "count": 74
+      },
+      {
+        "company": "Green Energy Nordic",
+        "count": 73
+      },
+      {
+        "company": "Green Power Nordic",
+        "count": 70
+      },
+      {
+        "company": "Energi & Miljöteknik i Sverige AB",
+        "count": 66
+      },
+      {
+        "company": "Scandinavian Solar AB",
+        "count": 63
+      },
+      {
+        "company": "Swedish Solar Power AB",
+        "count": 61
+      },
+      {
+        "company": "Nordic Energy Systems",
+        "count": 61
+      },
+      {
+        "company": "Evisol",
+        "count": 61
+      },
+      {
+        "company": "EcoSolar Scandinavia",
+        "count": 61
+      },
+      {
+        "company": "Renewable Energy Solutions",
+        "count": 60
+      }
+    ],
+    "leadTypes": [
+      {
+        "type": "Radhus - Solceller",
+        "count": 128
+      },
+      {
+        "type": "Konsultation",
+        "count": 125
+      },
+      {
+        "type": "Platsbesök",
+        "count": 124
+      },
+      {
+        "type": "Villa - Solceller",
+        "count": 119
+      },
+      {
+        "type": "Lägenhet - Solceller",
+        "count": 118
+      },
+      {
+        "type": "Företag - Solceller",
+        "count": 115
+      },
+      {
+        "type": "Villa - Solceller & Värmepump",
+        "count": 114
+      },
+      {
+        "type": "Offert",
+        "count": 113
+      },
+      {
+        "type": "Villa - Värmepump",
+        "count": 112
+      },
+      {
+        "type": "Radhus - Värmepump",
+        "count": 111
+      }
+    ],
+    "cities": [
+      {
+        "city": "Sundsvall",
+        "count": 25
+      },
+      {
+        "city": "Umeå",
+        "count": 25
+      },
+      {
+        "city": "Tumba",
+        "count": 24
+      },
+      {
+        "city": "Borås",
+        "count": 24
+      },
+      {
+        "city": "Uppsala",
+        "count": 23
+      },
+      {
+        "city": "Malmö",
+        "count": 22
+      },
+      {
+        "city": "Karlstad",
+        "count": 22
+      },
+      {
+        "city": "Skövde",
+        "count": 21
+      },
+      {
+        "city": "Södertälje",
+        "count": 21
+      },
+      {
+        "city": "Kalmar",
+        "count": 19
+      }
+    ]
+  }
+}

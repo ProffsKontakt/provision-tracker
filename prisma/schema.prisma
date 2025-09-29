@@ -1,0 +1,463 @@
+// Swedish Solar Lead Commission Tracker - Complete Database Schema
+// ProffsKontakt Suite Integration Ready
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  SETTER
+  ADMIN
+  MANAGER
+}
+
+enum DealStatus {
+  OPEN
+  WON
+  LOST
+}
+
+enum AdminApproval {
+  PENDING
+  APPROVED // "Godkänt"
+  REJECTED // "Underkänt"
+}
+
+enum CommissionStatus {
+  PENDING
+  APPROVED
+  CREDITED
+  PAID
+}
+
+enum LeadType {
+  OFFERT
+  PLATSBESOK
+}
+
+model User {
+  id                String    @id @default(cuid())
+  email             String    @unique
+  name              String
+  password          String    // Hashed with bcrypt
+  role              UserRole  @default(SETTER)
+  openerName        String    @unique // Maps to Pipedrive field 158 "Opener"
+  adversusAgentId   String?   @unique // Maps to Adversus agent ID
+  active            Boolean   @default(true)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  deals             Deal[]
+  commissions       Commission[]
+  adversusCalls     AdversusCall[]
+  adversusLeads     AdversusLead[] @relation(name: "SetterLeads") // Successful leads from Adversus
+  reviews           AdminReview[]
+  leadShares        LeadShare[] // Leads shared by this user
+  trainingMaterials SalesTrainingMaterial[] // Training materials uploaded
+
+  @@map("users")
+}
+
+model Deal {
+  id                Int       @id // Pipedrive deal ID
+  title             String
+  stage             String?
+  status            DealStatus
+  dealCreated       DateTime
+
+  // Attribution - Critical for commission calculation
+  opener            String    // Field 158 - THE KEY FIELD for attribution
+  user              User?     @relation(fields: [userId], references: [id])
+  userId            String?
+
+  // Admin validation - Required for commission eligibility
+  adminChecked      String?   // Field 122: "Godkänt", "Underkänt", null
+  adminApproval     AdminApproval @default(PENDING)
+
+  // Pipeline tracking for Swedish business rules
+  adversusPipeline  String?   // Track if in "Adversus" pipeline
+  isKlarOchUtskickad Boolean  @default(false) // "Klar och utskickad" stage
+
+  // Lead source and classification
+  leadSource        String?   // Field 44 "Leadkälla"
+  companyPool       String?   // Field 69 "Företagspool"
+
+  // Contact information
+  contactPerson     String?   // Field 120 "Kontaktperson"
+  phoneNumber       String?   // Field 57 "Telefonnummer"
+  propertyOwner     String?   // Field 156 "Fastighetsägare"
+  interestedIn      String?   // Field 155 "Intresserad av"
+  notes             String?   @db.Text // Field 154 "Anteckningar"
+
+  // Location and meeting details
+  streetAddress     String?   // Field 194 "Gata"
+  meetingDay        DateTime? // Field 191 "Mötesdag"
+  meetingTime       String?   // Field 190 "Mötestid"
+
+  // Company assignments (1-4 companies per deal)
+  company1          String?   // Field 153 "Bolag 1"
+  company1LeadType  LeadType? // Field 152 "Bolag 1: Leadtyp"
+  company2          String?   // Field 145 "Bolag 2"
+  company2LeadType  LeadType? // Field 144 "Bolag 2: Leadtyp"
+  company3          String?   // Field 137 "Bolag 3"
+  company3LeadType  LeadType? // Field 136 "Bolag 3: Leadtyp"
+  company4          String?   // Field 129 "Bolag 4"
+  company4LeadType  LeadType? // Field 128 "Bolag 4: Leadtyp"
+
+  // Credits - Multi-select field from Pipedrive
+  creditedCompanies Json?     // Field 173 "Krediterad (Multi select)"
+
+  // Commission calculation results (Swedish Kronor)
+  totalCommission   Decimal?  @db.Decimal(10, 2) // Total including base + lead types
+  baseBonus         Decimal?  @db.Decimal(10, 2) // 100 SEK if has any companies
+
+  // Lead sharing tracking for 14-day credit window
+  sharedWithCompanies DateTime? // When lead was shared with companies
+  creditWindowExpires DateTime? // 14 days after sharing
+
+  // Metadata and audit trail
+  pipedriveData     Json?     // Store full Pipedrive response for debugging
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  lastSyncedAt      DateTime  @default(now())
+
+  commissions       Commission[]
+  adversusCall      AdversusCall?
+  adversusLeads     AdversusLead[] @relation(name: "AdversusLeadDeals") // Related Adversus leads
+  leadShares        LeadShare[] // Track individual company shares
+
+  @@map("deals")
+}
+
+model Commission {
+  id                String    @id @default(cuid())
+
+  deal              Deal      @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  dealId            Int
+
+  user              User      @relation(fields: [userId], references: [id])
+  userId            String
+
+  companyName       String    // Which company this commission is for
+  leadType          LeadType  // OFFERT (100 SEK) or PLATSBESOK (300 SEK)
+
+  // Commission amounts in Swedish Kronor
+  leadTypeAmount    Decimal   @db.Decimal(10, 2) // 100 for Offert, 300 for Platsbesök
+  isBaseIncluded    Boolean   @default(false) // Track if base bonus is included
+
+  // Credit tracking - Important for Swedish business rules
+  creditedBack      Boolean   @default(false)
+  creditedAt        DateTime?
+  creditReason      String?   // Why was it credited back
+
+  // Payment tracking
+  status            CommissionStatus @default(PENDING)
+  paidAt            DateTime?
+  paymentBatch      String?   // For monthly payment runs
+
+  // Audit trail
+  calculatedAt      DateTime  @default(now())
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([dealId, companyName]) // One commission per company per deal
+  @@map("commissions")
+}
+
+model AdversusCall {
+  id                String    @id @default(cuid())
+  adversusCallId    String    @unique // External Adversus call ID
+
+  // Agent relationship
+  agent             User?     @relation(fields: [agentId], references: [adversusAgentId])
+  agentId           String?   // Maps to User.adversusAgentId
+
+  // Call details
+  customerPhone     String
+  callDuration      Int       // Duration in seconds
+  callTimestamp     DateTime
+  recordingUrl      String?   // URL to call recording
+
+  // Success marking (done in Adversus)
+  markedSuccess     Boolean   @default(false)
+  successMarkedAt   DateTime?
+
+  // Admin review process
+  adminReviewed     Boolean   @default(false)
+  adminStatus       String?   // "Godkänt" or "Underkänt"
+  reviewedBy        AdminReview?
+
+  // Link to resulting Pipedrive deal
+  pipedriveDeaI     Deal?     @relation(fields: [pipedriveDealId], references: [id])
+  pipedriveDealId   Int?      @unique
+
+  // AI integration
+  transcription     CallTranscription? // AI transcription and coaching
+  hasAiProcessing   Boolean   @default(false) // Flag for AI processing queue
+
+  // Store original Adversus data for debugging
+  adversusData      Json?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@map("adversus_calls")
+}
+
+// Model for storing successful Adversus leads/appointments
+model AdversusLead {
+  id                String    @id @default(cuid())
+  adversusId        String    @unique // External Adversus appointment ID
+
+  // Setter/Agent relationship
+  setter            User?     @relation(fields: [setterId], references: [adversusAgentId], name: "SetterLeads")
+  setterId          String?   // Maps to User.adversusAgentId
+  setterName        String    // Setter name from Adversus
+
+  // Customer information
+  customerName      String
+  customerPhone     String
+  customerEmail     String?
+
+  // Appointment details
+  appointmentDate   DateTime  // When the appointment is scheduled
+  bookedAt          DateTime  // When it was booked in Adversus
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Status tracking
+  adversusStatus    String    // 'booked', 'confirmed', 'completed', 'cancelled'
+  adminStatus       String    @default("pending") // 'pending', 'approved', 'rejected'
+  successStatus     String?   // The "success" status from Adversus
+
+  // Campaign information
+  campaignId        String?
+  campaignName      String?
+
+  // Company assignments (up to 4 companies per lead)
+  bolag1            String?   // Company 1 name
+  bolag1LeadType    String?   // Company 1 lead type
+  bolag2            String?   // Company 2 name
+  bolag2LeadType    String?   // Company 2 lead type
+  bolag3            String?   // Company 3 name
+  bolag3LeadType    String?   // Company 3 lead type
+  bolag4            String?   // Company 4 name
+  bolag4LeadType    String?   // Company 4 lead type
+
+  // Property and interest information
+  propertyType      String?   // 'Villa', 'Lägenhet', 'Kontor', etc.
+  energyInterest    Json?     // Array of energy interests ['Solceller', 'Värmepump', 'Vindkraft']
+
+  // Address information
+  streetAddress     String?
+  postalCode        String?
+  city              String?
+  county            String?
+
+  // Additional custom fields from Adversus
+  customFields      Json?     // Store all custom fields as JSON
+
+  // Link to resulting Pipedrive deal (if created)
+  pipedriveDeaI     Deal?     @relation(fields: [pipedriveDealId], references: [id], name: "AdversusLeadDeals")
+  pipedriveDealId   Int?
+
+  // Original Adversus data for reference
+  adversusData      Json?     // Full API response from Adversus
+
+  @@map("adversus_leads")
+}
+
+model AdminReview {
+  id                String    @id @default(cuid())
+
+  call              AdversusCall @relation(fields: [callId], references: [id], onDelete: Cascade)
+  callId            String    @unique
+
+  reviewer          User      @relation(fields: [reviewerId], references: [id])
+  reviewerId        String
+
+  status            String    // "Godkänt" or "Underkänt"
+  notes             String?   // Admin review notes
+  reviewDuration    Int?      // Time spent reviewing in seconds
+
+  createdAt         DateTime  @default(now())
+
+  @@map("admin_reviews")
+}
+
+model SystemLog {
+  id                String    @id @default(cuid())
+  type              String    // 'sync', 'error', 'commission_calc', 'webhook', etc
+  source            String    // 'pipedrive', 'adversus', 'commission', 'api'
+  message           String    // Human-readable message
+  data              Json?     // Structured data for debugging
+  createdAt         DateTime  @default(now())
+
+  @@index([type, source, createdAt])
+  @@map("system_logs")
+}
+
+model PaymentBatch {
+  id                String    @id @default(cuid())
+  batchNumber       String    @unique // e.g., "2024-01-BATCH"
+  month             Int       // 1-12
+  year              Int       // e.g., 2024
+  totalAmount       Decimal   @db.Decimal(10, 2) // Total SEK amount
+  commissionCount   Int       // Number of commissions in batch
+
+  // Payment workflow
+  status            String    // 'pending', 'approved', 'paid'
+  approvedBy        String?   // User ID who approved
+  approvedAt        DateTime?
+  paidAt            DateTime?
+  notes             String?   // Payment notes
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([year, month])
+  @@map("payment_batches")
+}
+
+// Swedish company information (for reference and validation)
+model Company {
+  id                String    @id @default(cuid())
+  name              String    @unique // Company name as it appears in Pipedrive
+  organisationsnummer String? @unique // Swedish organization number
+  contactEmail      String?
+  contactPhone      String?
+  address           String?
+  active            Boolean   @default(true)
+
+  // Commission tracking
+  totalLeadsReceived Int      @default(0)
+  totalCredited     Int       @default(0)
+  creditRate        Decimal?  @db.Decimal(5, 2) // Percentage
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  leadShares        LeadShare[] // Leads shared with this company
+
+  @@map("companies")
+}
+
+// Configuration table for Swedish business rules
+model CommissionRule {
+  id                String    @id @default(cuid())
+  name              String    @unique // e.g., "BASE_BONUS", "OFFERT_RATE", "PLATSBESOK_RATE"
+  value             Decimal   @db.Decimal(10, 2) // Amount in SEK
+  description       String?   // Human-readable description
+  active            Boolean   @default(true)
+
+  effectiveFrom     DateTime  @default(now())
+  effectiveTo       DateTime? // Null means still active
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@map("commission_rules")
+}
+
+// Track when leads are shared with companies (14-day credit window)
+model LeadShare {
+  id                String    @id @default(cuid())
+
+  deal              Deal      @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  dealId            Int
+
+  company           Company   @relation(fields: [companyId], references: [id])
+  companyId         String
+
+  // Sharing details
+  sharedAt          DateTime  @default(now())
+  sharedBy          User      @relation(fields: [sharedById], references: [id])
+  sharedById        String
+
+  // 14-day credit window (Swedish business rule)
+  creditWindowExpires DateTime // sharedAt + 14 days
+
+  // Tracking method
+  sharingMethod     String    // 'email', 'api', 'manual', etc.
+  emailSentTo       String?   // Company contact email
+
+  // Status tracking
+  acknowledged      Boolean   @default(false) // Company confirmed receipt
+  acknowledgedAt    DateTime?
+
+  createdAt         DateTime  @default(now())
+
+  @@unique([dealId, companyId]) // One share record per company per deal
+  @@map("lead_shares")
+}
+
+// AI transcription and coaching system
+model CallTranscription {
+  id                String    @id @default(cuid())
+
+  adversusCall      AdversusCall @relation(fields: [callId], references: [id], onDelete: Cascade)
+  callId            String    @unique
+
+  // OpenAI integration
+  transcriptionText String?   @db.Text // Full transcription from OpenAI Whisper
+  summary           String?   @db.Text // AI-generated summary
+  keyPoints         Json?     // Structured key points from call
+
+  // AI coaching feedback
+  coachingFeedback  String?   @db.Text // Personalized feedback for setter
+  salesScore        Int?      // 1-10 score based on sales training
+  improvementAreas  Json?     // Array of improvement suggestions
+
+  // Sentiment and quality analysis
+  customerSentiment String?   // 'positive', 'neutral', 'negative'
+  callQuality       String?   // 'excellent', 'good', 'fair', 'poor'
+
+  // Processing status
+  status            String    @default("pending") // 'pending', 'processing', 'completed', 'failed'
+  errorMessage      String?   // If processing failed
+
+  // AI model metadata
+  openaiModel       String?   // Which OpenAI model was used
+  processingCost    Decimal?  @db.Decimal(8, 4) // Cost in USD for tracking
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@map("call_transcriptions")
+}
+
+// Sales training material for AI coaching
+model SalesTrainingMaterial {
+  id                String    @id @default(cuid())
+
+  title             String
+  description       String?
+
+  // Content types
+  type              String    // 'pdf', 'txt', 'manual'
+  content           String    @db.Text // Extracted text content
+  originalFileName  String?   // Original file name
+
+  // Training categories
+  category          String    // 'objection_handling', 'closing', 'rapport_building', etc.
+  tags              Json?     // Array of tags for better categorization
+
+  // Usage in AI coaching
+  active            Boolean   @default(true)
+  priority          Int       @default(1) // 1-10, higher priority used more in coaching
+
+  // Metadata
+  uploadedBy        User      @relation(fields: [uploadedById], references: [id])
+  uploadedById      String
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@map("sales_training_materials")
+}
+

@@ -1,0 +1,94 @@
+# Daily Credit Window Notifications
+# Runs every day at 09:00 CET to check for expiring credit windows
+
+name: Credit Window Notifications
+
+on:
+  schedule:
+    # Run daily at 09:00 CET (08:00 UTC in winter, 07:00 UTC in summer)
+    - cron: '0 8 * * *'  # 08:00 UTC (09:00 CET in winter)
+
+  # Allow manual triggering for testing
+  workflow_dispatch:
+    inputs:
+      force_send:
+        description: 'Force send notifications even if no alerts'
+        required: false
+        default: 'false'
+        type: boolean
+
+jobs:
+  send-notifications:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send Credit Window Notifications
+        run: |
+          echo "🔄 Sending daily credit window notifications..."
+
+          response=$(curl -s -w "%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -d '{"force": "${{ github.event.inputs.force_send }}"}' \
+            "${{ secrets.APP_URL }}/api/cron/credit-notifications")
+
+          http_code="${response: -3}"
+          body="${response%???}"
+
+          echo "HTTP Status: $http_code"
+          echo "Response: $body"
+
+          if [ "$http_code" -eq 200 ]; then
+            echo "✅ Notifications sent successfully"
+            echo "::notice::Credit window notifications completed successfully"
+          else
+            echo "❌ Failed to send notifications"
+            echo "::error::Credit window notifications failed with status $http_code"
+            exit 1
+          fi
+
+      - name: Health Check
+        if: always()
+        run: |
+          echo "🩺 Checking cron endpoint health..."
+
+          response=$(curl -s -w "%{http_code}" \
+            "${{ secrets.APP_URL }}/api/cron/credit-notifications")
+
+          http_code="${response: -3}"
+          body="${response%???}"
+
+          echo "Health Check Status: $http_code"
+          echo "Health Check Response: $body"
+
+          if [ "$http_code" -eq 200 ]; then
+            echo "✅ Cron endpoint is healthy"
+          else
+            echo "⚠️ Cron endpoint health check failed"
+            echo "::warning::Cron endpoint returned status $http_code"
+          fi
+
+      - name: Notify on Failure
+        if: failure()
+        run: |
+          echo "🚨 Workflow failed - sending alert"
+
+          # Optional: Send failure notification to Slack/email
+          if [ -n "${{ secrets.SLACK_WEBHOOK_URL }}" ]; then
+            curl -X POST \
+              -H "Content-Type: application/json" \
+              -d '{
+                "text": "🚨 Credit Window Notifications Failed",
+                "blocks": [
+                  {
+                    "type": "section",
+                    "text": {
+                      "type": "mrkdwn",
+                      "text": "*Credit Window Notifications Failed*\n\nThe daily credit window notification cron job failed to execute.\n\n*Repository:* ${{ github.repository }}\n*Workflow:* ${{ github.workflow }}\n*Run ID:* ${{ github.run_id }}"
+                    }
+                  }
+                ]
+              }' \
+              "${{ secrets.SLACK_WEBHOOK_URL }}"
+          fi
